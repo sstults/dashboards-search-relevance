@@ -38,7 +38,7 @@ import {
   SearchConfigurationCreate,
 } from './search_configuration';
 import { JudgmentListing, JudgmentView, JudgmentCreate } from './judgment';
-import { LtrModelListing, LtrModelView } from './ltr_model';
+import { LtrModelListing, LtrModelUpload, LtrModelView } from './ltr_model';
 import { QuerySetView } from './query_set';
 import { QuerySetCreate } from './query_set';
 import { TemplateType, routeToTemplateType } from './experiment/configuration/types';
@@ -336,6 +336,13 @@ const SearchRelevancePage = ({
             render={(props) => {
               const { entityId } = props.match.params;
               return <LtrModelView http={http} id={decodeURIComponent(entityId)} />;
+            }}
+          />
+          <Route
+            path={Routes.LtrModelCreate}
+            exact
+            render={() => {
+              return <LtrModelUpload http={http} notifications={notifications} />;
             }}
           />
           <Route

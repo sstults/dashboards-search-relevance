@@ -11,14 +11,16 @@ import {
   OpenSearchDashboardsResponseFactory,
   RequestHandlerContext,
 } from '../../../../src/core/server';
-import { LtrBackendEndpoints, ServiceEndpoints } from '../../common';
+import { LtrBackendEndpoints, ltrCreateModelPath, ServiceEndpoints } from '../../common';
 
 /**
  * Routes backing the Learning to Rank model registry.
  *
  * These proxy to the LTR plugin's own `_ltr/*` namespace rather than
  * `_plugins/_search_relevance`. The `.ltrstore*` indices are registered system indices, so
- * the plugin's REST endpoints are the only supported way to read them.
+ * the plugin's REST endpoints are the only supported way to read or write them. Requests
+ * carry the calling user's credentials, so authorization stays with the LTR and security
+ * plugins.
  */
 export function registerLtrRoutes(router: IRouter): void {
   router.get(
@@ -49,6 +51,42 @@ export function registerLtrRoutes(router: IRouter): void {
       },
     },
     getModel
+  );
+
+  router.get(
+    {
+      path: ServiceEndpoints.LtrFeatureSets,
+      validate: {
+        query: schema.object({
+          size: schema.maybe(schema.number({ min: 1 })),
+          from: schema.maybe(schema.number({ min: 0 })),
+          prefix: schema.maybe(schema.string()),
+          store: schema.maybe(schema.string()),
+        }),
+      },
+    },
+    listFeatureSets
+  );
+
+  router.post(
+    {
+      path: ServiceEndpoints.LtrModels,
+      validate: {
+        // `definition` is deliberately unconstrained: the LTR store accepts either a raw
+        // string (RankLib) or embedded JSON (linear, XGBoost) and stores whichever it is
+        // given. Narrowing it here would reject valid models.
+        body: schema.object({
+          name: schema.string({ minLength: 1 }),
+          featureSetName: schema.string({ minLength: 1 }),
+          modelType: schema.string({ minLength: 1 }),
+          definition: schema.any(),
+        }),
+        query: schema.object({
+          store: schema.maybe(schema.string()),
+        }),
+      },
+    },
+    createModel
   );
 }
 
@@ -95,6 +133,77 @@ const getModel = async (
     const result = await caller('transport.request', {
       method: 'GET',
       path: `${storePath(LtrBackendEndpoints.Models, store)}/${encodeURIComponent(name)}`,
+    });
+
+    return response.ok({ body: result });
+  } catch (err) {
+    return ltrError(response, err);
+  }
+};
+
+const listFeatureSets = async (
+  context: RequestHandlerContext,
+  request: OpenSearchDashboardsRequest,
+  response: OpenSearchDashboardsResponseFactory
+): Promise<IOpenSearchDashboardsResponse<any>> => {
+  const { size, from, prefix, store } = request.query as {
+    size?: number;
+    from?: number;
+    prefix?: string;
+    store?: string;
+  };
+
+  try {
+    const caller = context.core.opensearch.legacy.client.callAsCurrentUser;
+    const result = await caller('transport.request', {
+      method: 'GET',
+      path: storePath(LtrBackendEndpoints.FeatureSets, store),
+      query: {
+        ...(size !== undefined ? { size } : {}),
+        ...(from !== undefined ? { from } : {}),
+        ...(prefix ? { prefix } : {}),
+      },
+    });
+
+    return response.ok({ body: result });
+  } catch (err) {
+    return ltrError(response, err);
+  }
+};
+
+/**
+ * Wraps the flat form payload in the nesting `_createmodel` expects. Keeping this on the
+ * server means the browser never has to know the store's document shape.
+ */
+export const createModelBody = (model: { name: string; modelType: string; definition: any }) => ({
+  model: {
+    name: model.name,
+    model: {
+      type: model.modelType,
+      definition: model.definition,
+    },
+  },
+});
+
+const createModel = async (
+  context: RequestHandlerContext,
+  request: OpenSearchDashboardsRequest,
+  response: OpenSearchDashboardsResponseFactory
+): Promise<IOpenSearchDashboardsResponse<any>> => {
+  const { name, featureSetName, modelType, definition } = request.body as {
+    name: string;
+    featureSetName: string;
+    modelType: string;
+    definition: any;
+  };
+  const { store } = request.query as { store?: string };
+
+  try {
+    const caller = context.core.opensearch.legacy.client.callAsCurrentUser;
+    const result = await caller('transport.request', {
+      method: 'POST',
+      path: storePath(ltrCreateModelPath(featureSetName), store),
+      body: createModelBody({ name, modelType, definition }),
     });
 
     return response.ok({ body: result });
@@ -153,6 +262,17 @@ export const ltrError = (response: OpenSearchDashboardsResponseFactory, err: any
   } else if (/index_not_found|no such index/i.test(reason)) {
     // LTR is installed but no feature store has been created yet.
     ltrErrorType = 'store_not_found';
+  } else if (/does not exist, please create it first/i.test(reason)) {
+    // Same condition as above, reported differently: _createmodel checks for the store
+    // itself and raises an illegal_argument rather than letting the read 404.
+    ltrErrorType = 'store_not_found';
+  } else if (/Stored feature set \[.*\] does not exist/i.test(reason)) {
+    // The upload named a feature set that is not in the store.
+    ltrErrorType = 'featureset_not_found';
+  } else if (/are not updatable, please create a new one instead/i.test(reason)) {
+    // The store has no update path, so a duplicate name is a name collision, not a
+    // transport failure. Surfaces as 405 by way of a version conflict.
+    ltrErrorType = 'model_exists';
   } else if (/LTR plugin is disabled/i.test(reason)) {
     ltrErrorType = 'plugin_disabled';
   } else if (/no handler found/i.test(reason)) {

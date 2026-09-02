@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { LtrModelListing } from '../views/ltr_model_listing';
 import { useLtrModelList } from '../hooks/use_ltr_model_list';
 
@@ -52,6 +52,15 @@ describe('LtrModelListing', () => {
     expect(screen.getByTestId('table-has-history')).toHaveTextContent('yes');
   });
 
+  it('routes the upload button to the upload form', () => {
+    mockUseLtrModelList.mockReturnValue(hookState() as any);
+
+    render(<LtrModelListing http={mockHttp} {...routeProps} />);
+    fireEvent.click(screen.getByTestId('createLtrModelButton'));
+
+    expect(routeProps.history.push).toHaveBeenCalledWith('/ltrModel/create');
+  });
+
   it('renders an error callout instead of the table when the fetch fails', () => {
     mockUseLtrModelList.mockReturnValue(hookState({ error: 'cluster is on fire' }) as any);
 
@@ -86,6 +95,8 @@ describe('LtrModelListing', () => {
     render(<LtrModelListing http={mockHttp} {...routeProps} />);
 
     expect(screen.getByText('Learning to Rank is not installed')).toBeInTheDocument();
+    // No reachable store means nothing to upload into.
+    expect(screen.queryByTestId('createLtrModelButton')).not.toBeInTheDocument();
   });
 
   it('warns alongside the table when the registry was truncated', () => {

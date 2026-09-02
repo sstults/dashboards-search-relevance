@@ -44,3 +44,31 @@ export interface LtrModelDetail extends LtrModelListItem {
   features: LtrFeature[];
   definition: any;
 }
+
+/**
+ * The model parsers the LTR plugin registers. The store accepts any string as a type but
+ * rejects the model at query time if nothing can parse it, so the upload form offers only
+ * the four types that exist.
+ */
+export const LTR_MODEL_TYPES = [
+  'model/ranklib',
+  'model/linear',
+  'model/xgboost+json',
+  'model/xgboost+json+raw',
+] as const;
+
+export type LtrModelType = typeof LTR_MODEL_TYPES[number];
+
+/** A feature set as listed for the upload form's picker. */
+export interface LtrFeatureSetSummary {
+  name: string;
+  featureCount: number;
+}
+
+/** The upload form's payload, flat; the server nests it for `_createmodel`. */
+export interface LtrModelUpload {
+  name: string;
+  featureSetName: string;
+  modelType: string;
+  definition: any;
+}

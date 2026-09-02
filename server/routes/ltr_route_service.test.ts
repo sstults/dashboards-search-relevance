@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ltrError, registerLtrRoutes, storePath } from './ltr_route_service';
+import { createModelBody, ltrError, registerLtrRoutes, storePath } from './ltr_route_service';
 
 describe('storePath', () => {
   it('reads the default store when no store is named', () => {
@@ -18,6 +18,12 @@ describe('storePath', () => {
     expect(storePath('/_ltr/_featureset', 'my_store')).toBe('/_ltr/my_store/_featureset');
     expect(storePath('/_ltr/_featureset/movies', 'my_store')).toBe(
       '/_ltr/my_store/_featureset/movies'
+    );
+  });
+
+  it('qualifies a create path, which carries segments after the collection', () => {
+    expect(storePath('/_ltr/_featureset/my_set/_createmodel', 'my_store')).toBe(
+      '/_ltr/my_store/_featureset/my_set/_createmodel'
     );
   });
 
@@ -82,6 +88,49 @@ describe('ltrError', () => {
     expect(attributesOf(err).ltrErrorType).toBe('plugin_not_installed');
   });
 
+  // _createmodel checks for the store itself and raises an illegal_argument rather than
+  // letting the read 404, so the same condition arrives worded differently.
+  it('classifies a missing store reported by _createmodel', () => {
+    const err = {
+      statusCode: 400,
+      body: {
+        error: {
+          type: 'illegal_argument_exception',
+          reason: 'Store [_default_] does not exist, please create it first.',
+        },
+      },
+    };
+    expect(attributesOf(err).ltrErrorType).toBe('store_not_found');
+  });
+
+  it('classifies an upload against a feature set that is not in the store', () => {
+    const err = {
+      statusCode: 400,
+      body: {
+        error: {
+          type: 'illegal_argument_exception',
+          reason: 'Stored feature set [my_set] does not exist',
+        },
+      },
+    };
+    expect(attributesOf(err).ltrErrorType).toBe('featureset_not_found');
+  });
+
+  // The store has no update path: a version conflict is reported as a 405 telling the user
+  // to pick another name, which is a form error rather than a transport failure.
+  it('classifies a duplicate model name', () => {
+    const err = {
+      statusCode: 405,
+      body: {
+        error: {
+          type: 'illegal_argument_exception',
+          reason: 'Element of type [model] are not updatable, please create a new one instead.',
+        },
+      },
+    };
+    expect(attributesOf(err).ltrErrorType).toBe('model_exists');
+  });
+
   it('leaves an unrecognized failure unclassified', () => {
     const err = { statusCode: 500, body: { error: { reason: 'circuit_breaking_exception' } } };
     const attributes = attributesOf(err);
@@ -108,15 +157,55 @@ describe('ltrError', () => {
 });
 
 describe('registerLtrRoutes', () => {
-  it('registers the listing and detail routes', () => {
-    const router = { get: jest.fn() } as any;
-
+  const register = () => {
+    const router = { get: jest.fn(), post: jest.fn() } as any;
     registerLtrRoutes(router);
+    return router;
+  };
 
-    expect(router.get).toHaveBeenCalledTimes(2);
+  it('registers the listing, detail, and feature set routes', () => {
+    const router = register();
+
+    expect(router.get).toHaveBeenCalledTimes(3);
     expect(router.get.mock.calls.map((call: any[]) => call[0].path)).toEqual([
       '/api/relevancy/ltr/models',
       '/api/relevancy/ltr/models/{name}',
+      '/api/relevancy/ltr/feature_sets',
     ]);
+  });
+
+  it('registers the upload route', () => {
+    const router = register();
+
+    expect(router.post).toHaveBeenCalledTimes(1);
+    expect(router.post.mock.calls[0][0].path).toBe('/api/relevancy/ltr/models');
+  });
+
+  it('accepts both definition shapes the store stores', () => {
+    const router = register();
+    const { body } = router.post.mock.calls[0][0].validate;
+    const model = {
+      name: 'my_model',
+      featureSetName: 'my_set',
+      modelType: 'model/linear',
+    };
+
+    // Constraining `definition` would reject one of the two valid forms outright.
+    expect(() => body.validate({ ...model, definition: '## LambdaMART' })).not.toThrow();
+    expect(() => body.validate({ ...model, definition: { title_match: 0.4 } })).not.toThrow();
+  });
+
+  it('rejects an upload with no name', () => {
+    const router = register();
+    const { body } = router.post.mock.calls[0][0].validate;
+
+    expect(() =>
+      body.validate({
+        name: '',
+        featureSetName: 'my_set',
+        modelType: 'model/linear',
+        definition: '{}',
+      })
+    ).toThrow();
   });
 });

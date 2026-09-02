@@ -4,10 +4,17 @@
  */
 
 import React from 'react';
-import { EuiCallOut, EuiFlexItem, EuiPageHeader, EuiPageTemplate, EuiSpacer } from '@elastic/eui';
+import {
+  EuiButton,
+  EuiCallOut,
+  EuiFlexItem,
+  EuiPageHeader,
+  EuiPageTemplate,
+  EuiSpacer,
+} from '@elastic/eui';
 import { RouteComponentProps, withRouter } from 'react-router-dom';
 import { CoreStart } from '../../../../../../src/core/public';
-import { LTR_MODEL_FETCH_SIZE } from '../../../../common';
+import { LTR_MODEL_FETCH_SIZE, Routes } from '../../../../common';
 import { LtrModelTable } from '../components/ltr_model_table';
 import { useLtrModelList } from '../hooks/use_ltr_model_list';
 import { LTR_UNAVAILABLE_COPY } from '../unavailable_copy';
@@ -61,6 +68,24 @@ export const LtrModelListing: React.FC<LtrModelListingProps> = ({ http, history 
       <EuiPageHeader
         pageTitle="LTR Models"
         description="Learning to Rank models stored in this cluster's feature store."
+        // Hidden when the registry itself is unavailable: with no reachable store there is
+        // nothing to upload into.
+        rightSideItems={
+          unavailableReason
+            ? []
+            : [
+                <EuiButton
+                  onClick={() => history.push(Routes.LtrModelCreate)}
+                  fill
+                  size="s"
+                  iconType="plusInCircle"
+                  color="primary"
+                  data-test-subj="createLtrModelButton"
+                >
+                  Upload Model
+                </EuiButton>,
+              ]
+        }
       />
       <EuiFlexItem>{renderBody()}</EuiFlexItem>
     </EuiPageTemplate>
